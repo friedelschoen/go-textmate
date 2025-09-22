@@ -234,7 +234,7 @@ func (g *Grammar) StackItem() *StackItem {
 // Offsets are global across lines; tokens are stabilized afterwards using CompareToken.
 func (g *Grammar) TokenizeReader(reader io.Reader) ([]*Token, error) {
 	top := g.StackItem()
-	tokens := make([]*Token, 0)
+	var tokens []*Token
 
 	scanner := bufio.NewScanner(reader)
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {

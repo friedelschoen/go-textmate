@@ -105,6 +105,9 @@ func (re *Regexp) Match(text string, from int, to int, options Option) ([]Range,
 	if len(text) == 0 {
 		return nil, nil
 	}
+	if to == 0 {
+		to = len(text)
+	}
 	bytes := []byte(text)
 	cpattern := (*C.OnigUChar)(unsafe.Pointer(&bytes[0]))
 	start := (*C.OnigUChar)(unsafe.Pointer(uintptr(unsafe.Pointer(&bytes[0])) + uintptr(from)))
