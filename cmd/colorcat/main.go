@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -122,32 +123,36 @@ func main() {
 				}
 			}
 
+			var csi bytes.Buffer
+
 			// Reset attributes
-			fmt.Printf("\033[0m")
+			csi.WriteString("\033[0")
 
 			// Font style
 			if tok.FontStyle.Has(theme.Bold) {
-				fmt.Printf("\033[1m")
+				csi.WriteString(";1")
 			}
 			if tok.FontStyle.Has(theme.Italic) {
-				fmt.Printf("\033[3m")
+				csi.WriteString(";3")
 			}
 			if tok.FontStyle.Has(theme.Underline) {
-				fmt.Printf("\033[4m")
+				csi.WriteString(";4")
 			}
 			if tok.FontStyle.Has(theme.Strikethrough) {
-				fmt.Printf("\033[9m")
+				csi.WriteString(";9")
 			}
 
 			// Colors
 			if tok.Foreground != nil {
 				r, g, b, _ := tok.Foreground.RGBA()
-				fmt.Printf("\033[38;2;%d;%d;%dm", r>>8, g>>8, b>>8)
+				fmt.Fprintf(&csi, ";38;2;%d;%d;%d", r>>8, g>>8, b>>8)
 			}
 			if tok.Background != nil {
 				r, g, b, _ := tok.Background.RGBA()
-				fmt.Printf("\033[48;2;%d;%d;%dm", r>>8, g>>8, b>>8)
+				fmt.Fprintf(&csi, ";48;2;%d;%d;%d", r>>8, g>>8, b>>8)
 			}
+			csi.WriteByte('m')
+			csi.WriteTo(os.Stdout)
 		}
 		fmt.Printf("%c", chr)
 	}
