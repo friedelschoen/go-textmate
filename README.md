@@ -1,6 +1,6 @@
 # go-textmate
 
-A Go implementation of a **TextMate grammar tokenizer**.
+A Go implementation of a **[TextMate grammar](https://macromates.com/manual/en/language_grammars) tokenizer**.
 It can load `.tmLanguage.json` grammars, compile them into an internal rule tree, and tokenize source text into scoped tokens. This is useful for syntax highlighting or code analysis.
 
 ## Features
@@ -19,6 +19,10 @@ It can load `.tmLanguage.json` grammars, compile them into an internal rule tree
 - Written in idiomatic Go, no C dependencies
 
 ## Installation
+
+### Requisite
+
+- [Oniguruma Regular Expression Library](https://github.com/kkos/oniguruma)
 
 ```bash
 % go get github.com/friedelschoen/go-textmate
@@ -59,13 +63,6 @@ for pos, scopes := range mapper.Iter() {
     fmt.Println(pos, scopes)
 }
 ```
-
-## Project structure
-
-* **`compile.go`** – parsing and compiling JSON grammar into `Grammar` and `MatchRule`
-* **`matcher.go`** – the tokenizer and stack machine for applying rules
-* **`map.go`** – utilities to map tokens to positions and iterate efficiently
-
 
 ## License
 

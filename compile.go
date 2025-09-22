@@ -23,15 +23,15 @@ var (
 // GrammarExtension is the expected extension for grammar files (used for "source.*" includes).
 var GrammarExtension = ".tmLanguage.json"
 
-// Operation controls parse stack behavior when a rule matches.
+// operation controls parse stack behavior when a rule matches.
 // Expand tries subrules only; Push/Pop open/close a block by mutating the stack.
-type Operation int
+type operation int
 
 const (
-	OperationNOP Operation = iota
-	OperationPush
-	OperationPop
-	OperationExpand
+	opNOP operation = iota
+	opPush
+	opPop
+	opExpand
 )
 
 // GrammarJSON mirrors the (subset of) TextMate JSON/Plist grammar on disk.
@@ -62,26 +62,26 @@ type RuleJSON struct {
 
 // Grammar is the compiled grammar with precompiled regexes and an executable rule tree.
 type Grammar struct {
-	Directory    string
-	ScopeName    string
-	FileTypes    []string
-	FoldingStart *regexp.Regexp
-	FoldingEnd   *regexp.Regexp
-	FirstLine    *regexp.Regexp
-	Repository   map[string]*MatchRule
-	Root         *MatchRule
+	directory    string
+	scopeName    string
+	fileTypes    []string
+	foldingStart *regexp.Regexp
+	foldingEnd   *regexp.Regexp
+	firstLine    *regexp.Regexp
+	repository   map[string]*matchRule
+	root         *matchRule
 }
 
-// MatchRule is an executable rule.
+// matchRule is an executable rule.
 // If Pattern != nil it's a concrete regex match; otherwise it's a container/redirect (Includes or Rules).
 // Operation drives stack behavior; Includes supports $self, #repo, and source.*.
-type MatchRule struct {
-	Name      string
-	Pattern   *regexp.Regexp
-	Captures  []*MatchRule
-	Rules     []*MatchRule
-	Operation Operation
-	Includes  string
+type matchRule struct {
+	name      string
+	pattern   *regexp.Regexp
+	captures  []*matchRule
+	rules     []*matchRule
+	operation operation
+	includes  string
 }
 
 // LoadGrammar reads a *.tmLanguage.json, validates scopeName vs filename,
@@ -100,8 +100,8 @@ func LoadGrammar(pathname string) (*Grammar, error) {
 }
 
 // CompileGrammar compiles a decoded GrammarJSON into an executable Grammar.
-// dirname decides where 'source.*' includes are resolved; filename is used
-// to strictly validate j.ScopeName ("source.<basename>").
+// dirname decides where 'source.*' includes are resolved and defaults to `.`; filename is used
+// to strictly validate j.ScopeName ("source.<basename>") and may be omitted.
 func CompileGrammar(j GrammarJSON, dirname string, filename string) (*Grammar, error) {
 	if filename != "" {
 		filesource := path.Base(filename)
@@ -116,32 +116,32 @@ func CompileGrammar(j GrammarJSON, dirname string, filename string) (*Grammar, e
 		dirname = "."
 	}
 	res := &Grammar{
-		Directory: dirname,
-		ScopeName: j.ScopeName,
-		FileTypes: j.FileTypes,
+		directory: dirname,
+		scopeName: j.ScopeName,
+		fileTypes: j.FileTypes,
 	}
 	if j.FoldingStart != "" {
 		expr, err := regexp.Compile(j.FoldingStart, 0)
 		if err != nil {
 			return nil, err
 		}
-		res.FoldingStart = expr
+		res.foldingStart = expr
 	}
 	if j.FoldingEnd != "" {
 		expr, err := regexp.Compile(j.FoldingEnd, 0)
 		if err != nil {
 			return nil, err
 		}
-		res.FoldingEnd = expr
+		res.foldingEnd = expr
 	}
 	if j.FirstLine != "" {
 		expr, err := regexp.Compile(j.FirstLine, 0)
 		if err != nil {
 			return nil, err
 		}
-		res.FirstLine = expr
+		res.firstLine = expr
 	}
-	rules := make([]*MatchRule, len(j.Patterns))
+	rules := make([]*matchRule, len(j.Patterns))
 	var err error
 	for i, jp := range j.Patterns {
 		rules[i], err = compileRule(jp)
@@ -149,10 +149,10 @@ func CompileGrammar(j GrammarJSON, dirname string, filename string) (*Grammar, e
 			return nil, err
 		}
 	}
-	res.Root = &MatchRule{Name: j.ScopeName, Rules: rules, Operation: OperationExpand}
-	res.Repository = make(map[string]*MatchRule, len(j.Repository))
+	res.root = &matchRule{name: j.ScopeName, rules: rules, operation: opExpand}
+	res.repository = make(map[string]*matchRule, len(j.Repository))
 	for name, jp := range j.Repository {
-		res.Repository[name], err = compileRule(jp)
+		res.repository[name], err = compileRule(jp)
 		if err != nil {
 			return nil, err
 		}
@@ -164,7 +164,7 @@ func CompileGrammar(j GrammarJSON, dirname string, filename string) (*Grammar, e
 // compileCaptures converts string-indexed captures ("1","2",...) to a slice
 // sized 0..maxIndex, leaving missing indices as nil.
 // Each capture may carry a scope name and/or subrules.
-func compileCaptures(j map[string]RuleJSON) ([]*MatchRule, error) {
+func compileCaptures(j map[string]RuleJSON) ([]*matchRule, error) {
 	if j == nil {
 		return nil, nil
 	}
@@ -181,18 +181,18 @@ func compileCaptures(j map[string]RuleJSON) ([]*MatchRule, error) {
 		}
 	}
 
-	res := make([]*MatchRule, maxcaptures+1)
+	res := make([]*matchRule, maxcaptures+1)
 	for num, jp := range j {
 		/* already checked if index is number */
 		i, _ := strconv.Atoi(num)
 
-		capture := &MatchRule{
-			Name: jp.Name,
+		capture := &matchRule{
+			name: jp.Name,
 		}
 		var err error
-		capture.Rules = make([]*MatchRule, len(jp.Patterns))
+		capture.rules = make([]*matchRule, len(jp.Patterns))
 		for i, jp := range jp.Patterns {
-			capture.Rules[i], err = compileRule(jp)
+			capture.rules[i], err = compileRule(jp)
 			if err != nil {
 				return nil, err
 			}
@@ -207,11 +207,11 @@ func compileCaptures(j map[string]RuleJSON) ([]*MatchRule, error) {
 
 // compileRule compiles a single RuleJSON into a MatchRule.
 // Case order follows TM conventions: Include, Match, Begin/End, Container.
-func compileRule(j RuleJSON) (*MatchRule, error) {
+func compileRule(j RuleJSON) (*matchRule, error) {
 	switch {
 	case j.Include != "":
-		return &MatchRule{
-			Includes: j.Include,
+		return &matchRule{
+			includes: j.Include,
 		}, nil
 	case j.Match != "":
 		match, err := regexp.Compile(j.Match, 0)
@@ -222,10 +222,10 @@ func compileRule(j RuleJSON) (*MatchRule, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &MatchRule{
-			Name:     j.Name,
-			Pattern:  match,
-			Captures: captures,
+		return &matchRule{
+			name:     j.Name,
+			pattern:  match,
+			captures: captures,
 		}, nil
 	case j.Begin != "" && j.End != "":
 		begin, err := regexp.Compile(j.Begin, 0)
@@ -236,7 +236,7 @@ func compileRule(j RuleJSON) (*MatchRule, error) {
 		if err != nil {
 			return nil, err
 		}
-		var beginCaptures, endCaptures []*MatchRule
+		var beginCaptures, endCaptures []*matchRule
 		if len(j.Captures) > 0 {
 			captures, err := compileCaptures(j.BeginCaptures)
 			if err != nil {
@@ -255,12 +255,12 @@ func compileRule(j RuleJSON) (*MatchRule, error) {
 			}
 		}
 
-		rules := make([]*MatchRule, len(j.Patterns)+1)
-		rules[0] = &MatchRule{
-			Name:      j.Name,
-			Pattern:   end,
-			Captures:  endCaptures,
-			Operation: OperationPop,
+		rules := make([]*matchRule, len(j.Patterns)+1)
+		rules[0] = &matchRule{
+			name:      j.Name,
+			pattern:   end,
+			captures:  endCaptures,
+			operation: opPop,
 		}
 		for i, jp := range j.Patterns {
 			rules[i+1], err = compileRule(jp)
@@ -268,16 +268,16 @@ func compileRule(j RuleJSON) (*MatchRule, error) {
 				return nil, err
 			}
 		}
-		return &MatchRule{
-			Pattern:   begin,
-			Captures:  beginCaptures,
-			Rules:     rules,
-			Operation: OperationPush,
+		return &matchRule{
+			pattern:   begin,
+			captures:  beginCaptures,
+			rules:     rules,
+			operation: opPush,
 		}, nil
 	case j.Begin != "" || j.End != "":
 		return nil, fmt.Errorf("found rule with begin or end omitted")
 	default:
-		rules := make([]*MatchRule, len(j.Patterns))
+		rules := make([]*matchRule, len(j.Patterns))
 		var err error
 		for i, jp := range j.Patterns {
 			rules[i], err = compileRule(jp)
@@ -285,10 +285,10 @@ func compileRule(j RuleJSON) (*MatchRule, error) {
 				return nil, err
 			}
 		}
-		return &MatchRule{
-			Name:      j.Name,
-			Rules:     rules,
-			Operation: OperationExpand,
+		return &matchRule{
+			name:      j.Name,
+			rules:     rules,
+			operation: opExpand,
 		}, nil
 	}
 }

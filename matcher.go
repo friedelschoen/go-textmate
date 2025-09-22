@@ -41,7 +41,7 @@ func (tok Token) End() int {
 
 // StackItem is one frame on the parse stack carrying the active rule context.
 type StackItem struct {
-	rules    []*MatchRule
+	rules    []*matchRule
 	grammar  *Grammar
 	offset   int
 	previous *StackItem
@@ -73,38 +73,38 @@ func (si *StackItem) Depth() int {
 // Returns (newTop, advance, err). advance meanings:
 //
 //	>0 = number of consumed bytes, 0 = no match, -1 = context switch (include of other grammar).
-func evaluateRule(offset int, text string, start int, end int, top *StackItem, yield func(*Token), rule *MatchRule) (*StackItem, int, error) {
+func evaluateRule(offset int, text string, start int, end int, top *StackItem, yield func(*Token), rule *matchRule) (*StackItem, int, error) {
 	switch {
-	case rule.Includes == "":
+	case rule.includes == "":
 		/* continue */
-	case rule.Includes[0] == '#':
-		newrule, ok := top.Root().Repository[rule.Includes[1:]]
+	case rule.includes[0] == '#':
+		newrule, ok := top.Root().repository[rule.includes[1:]]
 		if !ok {
-			panic("unknown " + rule.Includes)
+			panic("unknown " + rule.includes)
 		}
 		return evaluateRule(offset, text, start, end, top, yield, newrule)
-	case rule.Includes == "$self":
-		return evaluateRule(offset, text, start, end, top, yield, top.Root().Root)
-	case strings.HasPrefix(rule.Includes, "source."):
-		root := top.Root().Directory
-		other, err := LoadGrammar(path.Join(root, rule.Includes[8:]+GrammarExtension))
+	case rule.includes == "$self":
+		return evaluateRule(offset, text, start, end, top, yield, top.Root().root)
+	case strings.HasPrefix(rule.includes, "source."):
+		root := top.Root().directory
+		other, err := LoadGrammar(path.Join(root, rule.includes[8:]+GrammarExtension))
 		if err != nil {
-			return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.Includes, err)
+			return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.includes, err)
 		}
 		top = &StackItem{
-			rules:    []*MatchRule{other.Root},
+			rules:    []*matchRule{other.root},
 			grammar:  other,
 			previous: top,
 		}
 		return top, -1, nil
 	default:
-		return nil, 0, fmt.Errorf("unable to include `%s`: invalid request", rule.Includes)
+		return nil, 0, fmt.Errorf("unable to include `%s`: invalid request", rule.includes)
 	}
 
-	if rule.Operation == OperationExpand {
+	if rule.operation == opExpand {
 		var consumed int
 		var err error
-		for _, child := range rule.Rules {
+		for _, child := range rule.rules {
 			top, consumed, err = evaluateRule(offset, text, start, end, top, yield, child)
 			if err != nil {
 				return nil, 0, err
@@ -116,7 +116,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 		return top, 0, nil
 	}
 
-	groups, err := rule.Pattern.Match(text, start, len(text), regexp.OptionNotBeginPosition)
+	groups, err := rule.pattern.Match(text, start, len(text), regexp.OptionNotBeginPosition)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -125,9 +125,9 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 	}
 	length := groups[0].Len()
 
-	if rule.Name != "" {
+	if rule.name != "" {
 		yield(&Token{
-			Scope:  rule.Name,
+			Scope:  rule.name,
 			Start:  groups[0].Start + offset,
 			Length: groups[0].Len(),
 			Depth:  top.Depth(),
@@ -135,45 +135,45 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 	}
 
 	for i, rng := range groups {
-		if i >= len(rule.Captures) {
+		if i >= len(rule.captures) {
 			break
 		}
-		if rule.Captures[i] == nil {
+		if rule.captures[i] == nil {
 			continue
 		}
 		if rng.Len() == 0 {
 			continue
 		}
 
-		cap := rule.Captures[i]
-		if cap.Name != "" {
+		cap := rule.captures[i]
+		if cap.name != "" {
 			yield(&Token{
-				Scope:  cap.Name,
+				Scope:  cap.name,
 				Start:  rng.Start + offset,
 				Length: rng.Len(),
 				Depth:  top.Depth(),
 			})
 		}
 
-		if cap.Rules != nil {
+		if cap.rules != nil {
 			var err error
-			_, err = TokenizeLine(offset, text, rng.Start, rng.End, &StackItem{rules: cap.Rules, previous: top}, yield)
+			_, err = TokenizeLine(offset, text, rng.Start, rng.End, &StackItem{rules: cap.rules, previous: top}, yield)
 			if err != nil {
 				return nil, 0, err
 			}
 		}
 	}
 
-	switch rule.Operation {
-	case OperationPush:
+	switch rule.operation {
+	case opPush:
 		top = &StackItem{
 			offset:   start + offset,
-			rules:    rule.Rules,
+			rules:    rule.rules,
 			previous: top,
 		}
-	case OperationPop:
+	case opPop:
 		yield(&Token{
-			Scope:  rule.Name,
+			Scope:  rule.name,
 			Start:  top.offset,
 			Length: start + length + offset - top.offset,
 			Depth:  top.Depth(),
@@ -225,7 +225,7 @@ func TokenizeLine(offset int, text string, start int, end int, top *StackItem, y
 // StackItem constructs a root frame for this grammar.
 func (g *Grammar) StackItem() *StackItem {
 	return &StackItem{
-		rules:   []*MatchRule{g.Root},
+		rules:   []*matchRule{g.root},
 		grammar: g,
 	}
 }
