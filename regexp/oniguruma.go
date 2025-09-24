@@ -10,14 +10,18 @@ package regexp
 // }
 import "C"
 import (
-	"errors"
 	"fmt"
 	"unsafe"
 )
 
-var (
-	ErrRegexpSyntax = errors.New("syntax error")
-)
+type RegexpError struct {
+	pattern string
+	message string
+}
+
+func (err RegexpError) Error() string {
+	return fmt.Sprintf("error in `%s`: %s", err.pattern, err.message)
+}
 
 type Regexp struct {
 	c       C.OnigRegex
@@ -75,7 +79,7 @@ func Compile(pattern string, option Option) (*Regexp, error) {
 	r := Regexp{pattern: pattern}
 	bytes := []byte(pattern)
 	if len(bytes) == 0 {
-		return nil, fmt.Errorf("%w: empty pattern", ErrRegexpSyntax)
+		return nil, RegexpError{"<empty>", "empty pattern"}
 	}
 	start := (*C.OnigUChar)(unsafe.Pointer(&bytes[0]))
 	end := (*C.OnigUChar)(unsafe.Pointer(uintptr(unsafe.Pointer(&bytes[0])) + uintptr(len(bytes))))
@@ -86,7 +90,7 @@ func Compile(pattern string, option Option) (*Regexp, error) {
 	if ret != C.ONIG_NORMAL {
 		var errBuf [C.ONIG_MAX_ERROR_MESSAGE_LEN]C.char
 		C.error_code_to_str((*C.OnigUChar)(unsafe.Pointer(&errBuf[0])), ret, &errinfo)
-		return nil, fmt.Errorf("%w: %s", ErrRegexpSyntax, C.GoString(&errBuf[0]))
+		return nil, RegexpError{pattern, C.GoString(&errBuf[0])}
 	}
 
 	return &r, nil
@@ -122,7 +126,7 @@ func (re *Regexp) Match(text string, from int, to int, options Option) ([]Range,
 	} else if ret < 0 {
 		var errBuf [C.ONIG_MAX_ERROR_MESSAGE_LEN]C.char
 		C.error_code_to_str((*C.OnigUChar)(unsafe.Pointer(&errBuf[0])), ret, nil)
-		return nil, fmt.Errorf("%w: %s", ErrRegexpSyntax, errors.New(C.GoString(&errBuf[0])))
+		return nil, RegexpError{re.pattern, C.GoString(&errBuf[0])}
 	}
 
 	groups := make([]Range, region.num_regs)
