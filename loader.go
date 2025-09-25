@@ -2,6 +2,7 @@ package textmate
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"iter"
 	"maps"
@@ -30,6 +31,7 @@ func loadFile(pathname string) (*GrammarJSON, error) {
 	} else {
 		_, err = plist.Unmarshal(content, &encoded)
 	}
+	encoded.Name = fmt.Sprintf("%s (%s)", encoded.Name, path.Base(pathname))
 	return &encoded, err
 }
 

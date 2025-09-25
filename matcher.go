@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 
 	"github.com/friedelschoen/go-textmate/regexp"
 )
@@ -40,7 +39,7 @@ func (tok Token) End() int {
 
 // StackItem is one frame on the parse stack carrying the active rule context.
 type StackItem struct {
-	rules    []*matchRule
+	rules    []rule
 	offset   int
 	previous *StackItem
 }
@@ -55,50 +54,66 @@ func (si *StackItem) Depth() int {
 	return depth
 }
 
-// evaluateRule tries a single rule against text[start:end].
-// Returns (newTop, advance, err). advance meanings:
-//
-//	>0 = number of consumed bytes, 0 = no match, -1 = context switch (include of other grammar).
-func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), rule *matchRule, basegrammar *Grammar) (*StackItem, int, error) {
-	if rule.includes != "" {
-		scopename, rulename, hasRule := strings.Cut(rule.includes, "#")
+type includeRule struct {
+	scopename string
+	rulename  string
+	grammar   *Grammar
+}
 
-		var othergrammar *Grammar
-		switch scopename {
-		case "", "$self":
-			othergrammar = rule.grammar
-		case "$base":
-			othergrammar = basegrammar
-		default:
-			var err error
-			othergrammar, err = rule.grammar.loader.FromScope(scopename)
-			if err != nil {
-				return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.includes, err)
-			}
-		}
-		rule = othergrammar.root
-		if hasRule {
-			var ok bool
-			rule, ok = othergrammar.repository[rulename]
-			if !ok {
-				return nil, 0, fmt.Errorf("unable to include `%s`: unknown rule `%s`", rule.includes, rulename)
-			}
-		}
-		/* continue with new rule */
-	}
-
-	if rule.operation == opExpand {
-		var consumed int
+func (rule *includeRule) evaluate(offset int, text string, top *StackItem, yield func(*Token), basegrammar *Grammar) (*StackItem, int, error) {
+	var othergrammar *Grammar
+	switch rule.scopename {
+	case "", "$self":
+		othergrammar = rule.grammar
+	case "$base":
+		othergrammar = basegrammar
+	default:
 		var err error
-		for _, child := range rule.rules {
-			top, consumed, err = evaluateRule(offset, text, top, yield, child, basegrammar)
-			if err != nil || consumed != 0 {
-				return top, consumed, err
-			}
+		othergrammar, err = rule.grammar.loader.FromScope(rule.scopename)
+		if err != nil {
+			return nil, 0, fmt.Errorf("unable to include `%s#%s`: %w", rule.scopename, rule.rulename, err)
 		}
-		return top, 0, nil
 	}
 
+	otherrule := othergrammar.root
+	if len(rule.rulename) > 0 {
+		var ok bool
+		otherrule, ok = othergrammar.repository[rule.rulename]
+		if !ok {
+			return nil, 0, fmt.Errorf("unable to include `%s#%s`: unknown rule `%s`", rule.scopename, rule.rulename, rule.rulename)
+		}
+	}
+	return otherrule.evaluate(offset, text, top, yield, basegrammar)
+}
+
+type expandRule struct {
+	name    string
+	rules   []rule
+	grammar *Grammar
+}
+
+func (rule *expandRule) evaluate(offset int, text string, top *StackItem, yield func(*Token), basegrammar *Grammar) (*StackItem, int, error) {
+	var consumed int
+	var err error
+	for _, child := range rule.rules {
+		top, consumed, err = child.evaluate(offset, text, top, yield, basegrammar)
+		if err != nil || consumed != 0 {
+			return top, consumed, err
+		}
+	}
+	return top, 0, nil
+}
+
+type matchRule struct {
+	name      string
+	pattern   *regexp.Regexp
+	captures  []rule
+	rules     []rule
+	operation operation
+	grammar   *Grammar
+}
+
+func (rule *matchRule) evaluate(offset int, text string, top *StackItem, yield func(*Token), basegrammar *Grammar) (*StackItem, int, error) {
 	groups, err := rule.pattern.Match(text, 0, len(text), regexp.OptionNotBeginPosition)
 	if err != nil || groups == nil {
 		return top, 0, err
@@ -118,28 +133,27 @@ func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), r
 		if i >= len(rule.captures) {
 			break
 		}
-		if rule.captures[i] == nil {
-			continue
-		}
-		if rng.Len() == 0 {
+		if rng.Len() == 0 || rule.captures[i] == nil {
 			continue
 		}
 
 		cap := rule.captures[i]
-		if cap.name != "" {
-			yield(&Token{
-				Scope:  cap.name,
-				Start:  offset + rng.Start,
-				Length: rng.Len(),
-				Depth:  top.Depth(),
-			})
-		}
+		if othercap, ok := cap.(*matchRule); ok {
+			if othercap.name != "" {
+				yield(&Token{
+					Scope:  othercap.name,
+					Start:  offset + rng.Start,
+					Length: rng.Len(),
+					Depth:  top.Depth(),
+				})
+			}
 
-		if cap.rules != nil {
-			var err error
-			_, err = TokenizeSequence(offset+rng.Start, text[rng.Start:rng.End], &StackItem{rules: cap.rules, previous: top}, yield, basegrammar)
-			if err != nil {
-				return nil, 0, err
+			if othercap.rules != nil {
+				var err error
+				_, err = TokenizeSequence(offset+rng.Start, text[rng.Start:rng.End], &StackItem{rules: othercap.rules, previous: top}, yield, basegrammar)
+				if err != nil {
+					return nil, 0, err
+				}
 			}
 		}
 	}
@@ -173,7 +187,7 @@ func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token
 		var err error
 		var adv int
 		for _, rule := range top.rules {
-			top, adv, err = evaluateRule(offset+lineoffset, text[lineoffset:], top, yield, rule, basegrammar)
+			top, adv, err = rule.evaluate(offset+lineoffset, text[lineoffset:], top, yield, basegrammar)
 			if err != nil {
 				return nil, err
 			}
@@ -202,7 +216,7 @@ func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token
 // StackItem constructs a root frame for this grammar.
 func (g *Grammar) StackItem() *StackItem {
 	return &StackItem{
-		rules: []*matchRule{g.root},
+		rules: []rule{g.root},
 	}
 }
 
