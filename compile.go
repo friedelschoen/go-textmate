@@ -5,13 +5,9 @@
 package textmate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path"
 	"strconv"
-	"strings"
 
 	"github.com/friedelschoen/go-textmate/regexp"
 )
@@ -37,6 +33,7 @@ const (
 // GrammarJSON mirrors the (subset of) TextMate JSON/Plist grammar on disk.
 // It is decoded as-is and later compiled into Grammar.
 type GrammarJSON struct {
+	Name         string              `json:"name" plist:"name"`
 	ScopeName    string              `json:"scopeName" plist:"scopeName"`
 	FileTypes    []string            `json:"fileTypes" plist:"fileTypes"`
 	FoldingStart string              `json:"foldingStartMarker" plist:"foldingStartMarker"`
@@ -62,7 +59,7 @@ type RuleJSON struct {
 
 // Grammar is the compiled grammar with precompiled regexes and an executable rule tree.
 type Grammar struct {
-	directory    string
+	loader       *Loader
 	scopeName    string
 	fileTypes    []string
 	foldingStart *regexp.Regexp
@@ -84,39 +81,12 @@ type matchRule struct {
 	includes  string
 }
 
-// LoadGrammar reads a *.tmLanguage.json, validates scopeName vs filename,
-// and compiles it into a usable Grammar.
-func LoadGrammar(pathname string) (*Grammar, error) {
-	content, err := os.ReadFile(pathname)
-	if err != nil {
-		return nil, err
-	}
-	var encoded GrammarJSON
-	err = json.Unmarshal(content, &encoded)
-	if err != nil {
-		return nil, err
-	}
-	return CompileGrammar(encoded, path.Dir(pathname), path.Base(pathname))
-}
-
 // CompileGrammar compiles a decoded GrammarJSON into an executable Grammar.
 // dirname decides where 'source.*' includes are resolved and defaults to `.`; filename is used
 // to strictly validate j.ScopeName ("source.<basename>") and may be omitted.
-func CompileGrammar(j GrammarJSON, dirname string, filename string) (*Grammar, error) {
-	if filename != "" {
-		filesource := path.Base(filename)
-		filesource, _ = strings.CutSuffix(filesource, GrammarExtension)
-		jsonsource, _ := strings.CutPrefix(j.ScopeName, "source.")
-		if jsonsource != filesource {
-			return nil, fmt.Errorf("%w: expected 'source.%s', got '%s'", ErrScopeName, filesource, j.ScopeName)
-		}
-	}
-
-	if dirname == "" {
-		dirname = "."
-	}
+func CompileGrammar(l *Loader, j *GrammarJSON) (*Grammar, error) {
 	res := &Grammar{
-		directory: dirname,
+		loader:    l,
 		scopeName: j.ScopeName,
 		fileTypes: j.FileTypes,
 	}

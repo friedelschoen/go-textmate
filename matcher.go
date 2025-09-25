@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"path"
 	"slices"
 	"strings"
 
@@ -47,9 +46,9 @@ type StackItem struct {
 	previous *StackItem
 }
 
-// Root walks up to the nearest non-nil grammar on the stack.
+// Grammar walks up to the nearest non-nil grammar on the stack.
 // Panics if none is found (should not happen).
-func (si *StackItem) Root() *Grammar {
+func (si *StackItem) Grammar() *Grammar {
 	for si.grammar == nil {
 		si = si.previous
 	}
@@ -74,31 +73,29 @@ func (si *StackItem) Depth() int {
 //
 //	>0 = number of consumed bytes, 0 = no match, -1 = context switch (include of other grammar).
 func evaluateRule(offset int, text string, start int, end int, top *StackItem, yield func(*Token), rule *matchRule) (*StackItem, int, error) {
-	switch {
-	case rule.includes == "":
-		/* continue */
-	case rule.includes[0] == '#':
-		newrule, ok := top.Root().repository[rule.includes[1:]]
-		if !ok {
-			panic("unknown " + rule.includes)
+	if rule.includes != "" {
+		othergrammar := top.Grammar()
+		scopename, rulename, hasRule := strings.Cut(rule.includes, "#")
+		if scopename != "" && scopename != "$self" {
+			var err error
+			othergrammar, err = top.Grammar().loader.FromScope(scopename)
+			if err != nil {
+				return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.includes, err)
+			}
+			top = &StackItem{
+				grammar:  othergrammar,
+				previous: top,
+			}
 		}
-		return evaluateRule(offset, text, start, end, top, yield, newrule)
-	case rule.includes == "$self":
-		return evaluateRule(offset, text, start, end, top, yield, top.Root().root)
-	case strings.HasPrefix(rule.includes, "source."):
-		root := top.Root().directory
-		other, err := LoadGrammar(path.Join(root, rule.includes[8:]+GrammarExtension))
-		if err != nil {
-			return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.includes, err)
+		otherrule := othergrammar.root
+		if hasRule {
+			var ok bool
+			otherrule, ok = othergrammar.repository[rulename]
+			if !ok {
+				return nil, 0, fmt.Errorf("unable to include `%s`: unknown rule `%s`", rule.includes, rulename)
+			}
 		}
-		top = &StackItem{
-			rules:    []*matchRule{other.root},
-			grammar:  other,
-			previous: top,
-		}
-		return top, -1, nil
-	default:
-		return nil, 0, fmt.Errorf("unable to include `%s`: invalid request", rule.includes)
+		return evaluateRule(offset, text, start, end, top, yield, otherrule)
 	}
 
 	if rule.operation == opExpand {
@@ -106,22 +103,16 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 		var err error
 		for _, child := range rule.rules {
 			top, consumed, err = evaluateRule(offset, text, start, end, top, yield, child)
-			if err != nil {
-				return nil, 0, err
-			}
-			if consumed != 0 {
-				return top, consumed, nil
+			if err != nil || consumed != 0 {
+				return top, consumed, err
 			}
 		}
 		return top, 0, nil
 	}
 
 	groups, err := rule.pattern.Match(text, start, len(text), regexp.OptionNotBeginPosition)
-	if err != nil {
-		return nil, 0, err
-	}
-	if groups == nil {
-		return top, 0, nil
+	if err != nil || groups == nil {
+		return top, 0, err
 	}
 	length := groups[0].Len()
 

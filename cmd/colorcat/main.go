@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/friedelschoen/go-textmate"
@@ -21,11 +23,59 @@ var themeDir = "share/colorcat/themes"
 func main() {
 	// Flags
 	var grammarName, themeName string
-	var transparent bool
+	var transparent, doList bool
 	flag.StringVar(&grammarName, "syntax", "", "Name")
 	flag.StringVar(&themeName, "theme", "default", "Theme")
 	flag.BoolVar(&transparent, "transparent", false, "Theme")
+	flag.BoolVar(&doList, "list", false, "List all themes and available syntaxes")
 	flag.Parse()
+
+	userdir, userdirErr := os.UserHomeDir()
+
+	loader, _ := textmate.NewLoader(func(yield func(string) bool) {
+		dir := filepath.Join("/usr", grammarDir)
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				if !yield(path.Join(dir, entry.Name())) {
+					return
+				}
+			}
+		}
+		if userdirErr == nil {
+			dir = filepath.Join(userdir, ".local", grammarDir)
+			entries, _ = os.ReadDir(dir)
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					if !yield(path.Join(dir, entry.Name())) {
+						return
+					}
+				}
+			}
+		}
+	})
+
+	if doList {
+		fmt.Println("File Types:")
+		fts := slices.Collect(loader.FileTypes())
+		names := maps.Collect(loader.FileTypeNames())
+		slices.Sort(fts)
+		for _, ft := range fts {
+			fmt.Printf("- %s: %s\n", ft, strings.Join(names[ft], ", "))
+		}
+
+		os.Exit(1)
+	}
+
+	// Defaults if not set
+	themePath := filepath.Join("/usr", themeDir, themeName+".json")
+	if _, err := os.Stat(themePath); err != nil {
+		if userdirErr != nil {
+			fmt.Fprintf(os.Stderr, "unable to determine home directory: %v\n", err)
+			os.Exit(1)
+		}
+		themePath = filepath.Join(userdir, ".local", themeDir, themeName+".json")
+	}
 
 	sourceFile := os.Stdin
 	defer sourceFile.Close()
@@ -43,31 +93,10 @@ func main() {
 		}
 	}
 
-	grammarPath := filepath.Join("/usr", grammarDir, grammarName+".tmLanguage.json")
-	themePath := filepath.Join("/usr", themeDir, themeName+".json")
-
-	userdir, userdirErr := os.UserHomeDir()
-
-	// Defaults if not set
-	if _, err := os.Stat(grammarPath); err != nil {
-		if userdirErr != nil {
-			fmt.Fprintf(os.Stderr, "unable to determine home directory: %v\n", err)
-			os.Exit(1)
-		}
-		grammarPath = filepath.Join(userdir, ".local", grammarDir, grammarName+".tmLanguage.json")
-	}
-	if _, err := os.Stat(themePath); err != nil {
-		if userdirErr != nil {
-			fmt.Fprintf(os.Stderr, "unable to determine home directory: %v\n", err)
-			os.Exit(1)
-		}
-		themePath = filepath.Join(userdir, ".local", themeDir, themeName+".json")
-	}
-
 	// Load grammar
-	grammar, err := textmate.LoadGrammar(grammarPath)
+	grammar, err := loader.FromFileType(grammarName, 0)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load grammar `%s`: %v\n", grammarPath, err)
+		fmt.Fprintf(os.Stderr, "failed to load grammar `%s`: %v\n", grammarName, err)
 		os.Exit(1)
 	}
 
