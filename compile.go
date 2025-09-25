@@ -47,6 +47,7 @@ type RuleJSON struct {
 	Match         string              `json:"match" plist:"match"`
 	Begin         string              `json:"begin" plist:"begin"`
 	End           string              `json:"end" plist:"end"`
+	While         string              `json:"while" plist:"while"`
 	Patterns      []RuleJSON          `json:"patterns" plist:"patterns"`
 	Captures      map[string]RuleJSON `json:"captures" plist:"captures"`
 	BeginCaptures map[string]RuleJSON `json:"beginCaptures" plist:"beginCaptures"`
@@ -195,12 +196,18 @@ func compileRule(grammar *Grammar, j RuleJSON) (rule, error) {
 			captures: captures,
 			grammar:  grammar,
 		}, nil
-	case j.Begin != "" && j.End != "":
+	case j.Begin != "" && (j.End != "" || j.While != ""):
 		begin, err := regexp.Compile(j.Begin, 0)
 		if err != nil {
 			return nil, err
 		}
-		end, err := regexp.Compile(j.End, 0)
+		endptr := j.End
+		whileEnd := false
+		if j.While != "" {
+			endptr = j.While
+			whileEnd = true
+		}
+		end, err := regexp.Compile(endptr, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -228,6 +235,7 @@ func compileRule(grammar *Grammar, j RuleJSON) (rule, error) {
 			name:      j.Name,
 			pattern:   end,
 			captures:  endCaptures,
+			negate:    whileEnd,
 			operation: opPop,
 			grammar:   grammar,
 		}
@@ -244,7 +252,7 @@ func compileRule(grammar *Grammar, j RuleJSON) (rule, error) {
 			operation: opPush,
 			grammar:   grammar,
 		}, nil
-	case j.Begin != "" || j.End != "":
+	case j.Begin != "" || j.End != "" || j.While != "":
 		return nil, fmt.Errorf("found rule with begin or end omitted")
 	default:
 		rules := make([]rule, len(j.Patterns))

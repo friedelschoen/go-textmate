@@ -107,6 +107,7 @@ func (rule *expandRule) evaluate(offset int, text string, top *StackItem, yield 
 type matchRule struct {
 	name      string
 	pattern   *regexp.Regexp
+	negate    bool /* a succeed pattern means the match failed */
 	captures  []rule
 	rules     []rule
 	operation operation
@@ -115,18 +116,29 @@ type matchRule struct {
 
 func (rule *matchRule) evaluate(offset int, text string, top *StackItem, yield func(*Token), basegrammar *Grammar) (*StackItem, int, error) {
 	groups, err := rule.pattern.Match(text, 0, len(text), regexp.OptionNotBeginPosition)
-	if err != nil || groups == nil {
+	if err != nil || (groups == nil) != rule.negate {
 		return top, 0, err
 	}
-	length := groups[0].Len()
+	var length int
+	if len(groups) > 0 {
+		length = groups[0].Len()
+	}
 
 	if rule.name != "" {
-		yield(&Token{
-			Scope:  rule.name,
-			Start:  groups[0].Start + offset,
-			Length: groups[0].Len(),
-			Depth:  top.Depth(),
-		})
+		if len(groups) > 0 {
+			yield(&Token{
+				Scope:  rule.name,
+				Start:  groups[0].Start + offset,
+				Length: groups[0].Len(),
+				Depth:  top.Depth(),
+			})
+		} else {
+			yield(&Token{
+				Scope: rule.name,
+				Start: offset,
+				Depth: top.Depth(),
+			})
+		}
 	}
 
 	for i, rng := range groups {
