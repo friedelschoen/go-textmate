@@ -41,21 +41,8 @@ func (tok Token) End() int {
 // StackItem is one frame on the parse stack carrying the active rule context.
 type StackItem struct {
 	rules    []*matchRule
-	grammar  *Grammar
 	offset   int
 	previous *StackItem
-}
-
-// Grammar walks up to the nearest non-nil grammar on the stack.
-// Panics if none is found (should not happen).
-func (si *StackItem) Grammar() *Grammar {
-	for si.grammar == nil {
-		si = si.previous
-	}
-	if si == nil {
-		panic("stack does not contain a grammar")
-	}
-	return si.grammar
 }
 
 // Depth returns the nesting depth of this frame (used for token priority).
@@ -72,37 +59,39 @@ func (si *StackItem) Depth() int {
 // Returns (newTop, advance, err). advance meanings:
 //
 //	>0 = number of consumed bytes, 0 = no match, -1 = context switch (include of other grammar).
-func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), rule *matchRule) (*StackItem, int, error) {
+func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), rule *matchRule, basegrammar *Grammar) (*StackItem, int, error) {
 	if rule.includes != "" {
-		othergrammar := top.Grammar()
 		scopename, rulename, hasRule := strings.Cut(rule.includes, "#")
-		if scopename != "" && scopename != "$self" {
+
+		var othergrammar *Grammar
+		switch scopename {
+		case "", "$self":
+			othergrammar = rule.grammar
+		case "$base":
+			othergrammar = basegrammar
+		default:
 			var err error
-			othergrammar, err = top.Grammar().loader.FromScope(scopename)
+			othergrammar, err = rule.grammar.loader.FromScope(scopename)
 			if err != nil {
 				return nil, 0, fmt.Errorf("unable to include `%s`: %w", rule.includes, err)
 			}
-			top = &StackItem{
-				grammar:  othergrammar,
-				previous: top,
-			}
 		}
-		otherrule := othergrammar.root
+		rule = othergrammar.root
 		if hasRule {
 			var ok bool
-			otherrule, ok = othergrammar.repository[rulename]
+			rule, ok = othergrammar.repository[rulename]
 			if !ok {
 				return nil, 0, fmt.Errorf("unable to include `%s`: unknown rule `%s`", rule.includes, rulename)
 			}
 		}
-		return evaluateRule(offset, text, top, yield, otherrule)
+		/* continue with new rule */
 	}
 
 	if rule.operation == opExpand {
 		var consumed int
 		var err error
 		for _, child := range rule.rules {
-			top, consumed, err = evaluateRule(offset, text, top, yield, child)
+			top, consumed, err = evaluateRule(offset, text, top, yield, child, basegrammar)
 			if err != nil || consumed != 0 {
 				return top, consumed, err
 			}
@@ -148,7 +137,7 @@ func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), r
 
 		if cap.rules != nil {
 			var err error
-			_, err = TokenizeSequence(offset+rng.Start, text[rng.Start:rng.End], &StackItem{rules: cap.rules, previous: top}, yield)
+			_, err = TokenizeSequence(offset+rng.Start, text[rng.Start:rng.End], &StackItem{rules: cap.rules, previous: top}, yield, basegrammar)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -177,14 +166,14 @@ func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), r
 
 // TokenizeSequence tokenizes text[start:end] within the given stack context.
 // Always guarantees progress: if nothing matches, emits a 1-byte filler token (Scope:"").
-func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token)) (*StackItem, error) {
+func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token), basegrammar *Grammar) (*StackItem, error) {
 	lineoffset := 0
 	for lineoffset < len(text) {
 		consumed := false
 		var err error
 		var adv int
 		for _, rule := range top.rules {
-			top, adv, err = evaluateRule(offset+lineoffset, text[lineoffset:], top, yield, rule)
+			top, adv, err = evaluateRule(offset+lineoffset, text[lineoffset:], top, yield, rule, basegrammar)
 			if err != nil {
 				return nil, err
 			}
@@ -213,8 +202,7 @@ func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token
 // StackItem constructs a root frame for this grammar.
 func (g *Grammar) StackItem() *StackItem {
 	return &StackItem{
-		rules:   []*matchRule{g.root},
-		grammar: g,
+		rules: []*matchRule{g.root},
 	}
 }
 
@@ -241,7 +229,7 @@ func (g *Grammar) TokenizeReader(reader io.Reader) ([]*Token, error) {
 		text := scanner.Text()
 		top, err = TokenizeSequence(offset, text, top, func(t *Token) {
 			tokens = append(tokens, t)
-		})
+		}, g)
 		if err != nil {
 			return nil, err
 		}

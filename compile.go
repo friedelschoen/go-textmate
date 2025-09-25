@@ -79,6 +79,7 @@ type matchRule struct {
 	rules     []*matchRule
 	operation operation
 	includes  string
+	grammar   *Grammar
 }
 
 // CompileGrammar compiles a decoded GrammarJSON into an executable Grammar.
@@ -114,15 +115,15 @@ func CompileGrammar(l *Loader, j *GrammarJSON) (*Grammar, error) {
 	rules := make([]*matchRule, len(j.Patterns))
 	var err error
 	for i, jp := range j.Patterns {
-		rules[i], err = compileRule(jp)
+		rules[i], err = compileRule(res, jp)
 		if err != nil {
 			return nil, err
 		}
 	}
-	res.root = &matchRule{name: j.ScopeName, rules: rules, operation: opExpand}
+	res.root = &matchRule{name: j.ScopeName, rules: rules, operation: opExpand, grammar: res}
 	res.repository = make(map[string]*matchRule, len(j.Repository))
 	for name, jp := range j.Repository {
-		res.repository[name], err = compileRule(jp)
+		res.repository[name], err = compileRule(res, jp)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +135,7 @@ func CompileGrammar(l *Loader, j *GrammarJSON) (*Grammar, error) {
 // compileCaptures converts string-indexed captures ("1","2",...) to a slice
 // sized 0..maxIndex, leaving missing indices as nil.
 // Each capture may carry a scope name and/or subrules.
-func compileCaptures(j map[string]RuleJSON) ([]*matchRule, error) {
+func compileCaptures(grammar *Grammar, j map[string]RuleJSON) ([]*matchRule, error) {
 	if j == nil {
 		return nil, nil
 	}
@@ -157,12 +158,13 @@ func compileCaptures(j map[string]RuleJSON) ([]*matchRule, error) {
 		i, _ := strconv.Atoi(num)
 
 		capture := &matchRule{
-			name: jp.Name,
+			name:    jp.Name,
+			grammar: grammar,
 		}
 		var err error
 		capture.rules = make([]*matchRule, len(jp.Patterns))
 		for i, jp := range jp.Patterns {
-			capture.rules[i], err = compileRule(jp)
+			capture.rules[i], err = compileRule(grammar, jp)
 			if err != nil {
 				return nil, err
 			}
@@ -177,18 +179,19 @@ func compileCaptures(j map[string]RuleJSON) ([]*matchRule, error) {
 
 // compileRule compiles a single RuleJSON into a MatchRule.
 // Case order follows TM conventions: Include, Match, Begin/End, Container.
-func compileRule(j RuleJSON) (*matchRule, error) {
+func compileRule(grammar *Grammar, j RuleJSON) (*matchRule, error) {
 	switch {
 	case j.Include != "":
 		return &matchRule{
 			includes: j.Include,
+			grammar:  grammar,
 		}, nil
 	case j.Match != "":
 		match, err := regexp.Compile(j.Match, 0)
 		if err != nil {
 			return nil, err
 		}
-		captures, err := compileCaptures(j.Captures)
+		captures, err := compileCaptures(grammar, j.Captures)
 		if err != nil {
 			return nil, err
 		}
@@ -196,6 +199,7 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 			name:     j.Name,
 			pattern:  match,
 			captures: captures,
+			grammar:  grammar,
 		}, nil
 	case j.Begin != "" && j.End != "":
 		begin, err := regexp.Compile(j.Begin, 0)
@@ -208,18 +212,18 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 		}
 		var beginCaptures, endCaptures []*matchRule
 		if len(j.Captures) > 0 {
-			captures, err := compileCaptures(j.BeginCaptures)
+			captures, err := compileCaptures(grammar, j.BeginCaptures)
 			if err != nil {
 				return nil, err
 			}
 			beginCaptures = captures
 			endCaptures = captures
 		} else {
-			beginCaptures, err = compileCaptures(j.BeginCaptures)
+			beginCaptures, err = compileCaptures(grammar, j.BeginCaptures)
 			if err != nil {
 				return nil, err
 			}
-			endCaptures, err = compileCaptures(j.EndCaptures)
+			endCaptures, err = compileCaptures(grammar, j.EndCaptures)
 			if err != nil {
 				return nil, err
 			}
@@ -231,9 +235,10 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 			pattern:   end,
 			captures:  endCaptures,
 			operation: opPop,
+			grammar:   grammar,
 		}
 		for i, jp := range j.Patterns {
-			rules[i+1], err = compileRule(jp)
+			rules[i+1], err = compileRule(grammar, jp)
 			if err != nil {
 				return nil, err
 			}
@@ -243,6 +248,7 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 			captures:  beginCaptures,
 			rules:     rules,
 			operation: opPush,
+			grammar:   grammar,
 		}, nil
 	case j.Begin != "" || j.End != "":
 		return nil, fmt.Errorf("found rule with begin or end omitted")
@@ -250,7 +256,7 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 		rules := make([]*matchRule, len(j.Patterns))
 		var err error
 		for i, jp := range j.Patterns {
-			rules[i], err = compileRule(jp)
+			rules[i], err = compileRule(grammar, jp)
 			if err != nil {
 				return nil, err
 			}
@@ -259,6 +265,7 @@ func compileRule(j RuleJSON) (*matchRule, error) {
 			name:      j.Name,
 			rules:     rules,
 			operation: opExpand,
+			grammar:   grammar,
 		}, nil
 	}
 }

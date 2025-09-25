@@ -126,7 +126,7 @@ func main() {
 	var off int
 	stack := grammar.StackItem()
 	for _, line := range strings.SplitAfter(source, "\n") {
-		stack, err = textmate.TokenizeSequence(off, line, stack, mapper.Add)
+		stack, err = textmate.TokenizeSequence(off, line, stack, mapper.Add, grammar)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tokenization error: %v\n", err)
 			os.Exit(1)
