@@ -16,6 +16,7 @@ import (
 type Loader struct {
 	filetypes map[string][]*GrammarJSON
 	scopes    map[string]*GrammarJSON
+	cache     map[*GrammarJSON]*Grammar
 }
 
 func loadFile(pathname string) (*GrammarJSON, error) {
@@ -36,6 +37,7 @@ func NewLoader(paths iter.Seq[string]) (*Loader, bool) {
 	loader := Loader{
 		scopes:    make(map[string]*GrammarJSON),
 		filetypes: make(map[string][]*GrammarJSON),
+		cache:     make(map[*GrammarJSON]*Grammar),
 	}
 
 	for pathname := range paths {
@@ -84,12 +86,21 @@ func NewLoaderFromDir(dir string, walk bool) (*Loader, bool) {
 	}
 }
 
+func (l *Loader) load(grm *GrammarJSON) (*Grammar, error) {
+	if comp, ok := l.cache[grm]; ok {
+		return comp, nil
+	}
+	comp, err := CompileGrammar(l, grm)
+	l.cache[grm] = comp
+	return comp, err
+}
+
 func (l *Loader) FromScope(scope string) (*Grammar, error) {
 	grm, ok := l.scopes[scope]
 	if !ok {
 		return nil, os.ErrNotExist
 	}
-	return CompileGrammar(l, grm)
+	return l.load(grm)
 }
 
 func (l *Loader) FromFileType(ft string, index int) (*Grammar, error) {
@@ -97,7 +108,7 @@ func (l *Loader) FromFileType(ft string, index int) (*Grammar, error) {
 	if !ok || index >= len(grms) {
 		return nil, os.ErrNotExist
 	}
-	return CompileGrammar(l, grms[index])
+	return l.load(grms[index])
 }
 
 func (l *Loader) Scopes() iter.Seq[string] {
