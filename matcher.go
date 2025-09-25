@@ -72,7 +72,7 @@ func (si *StackItem) Depth() int {
 // Returns (newTop, advance, err). advance meanings:
 //
 //	>0 = number of consumed bytes, 0 = no match, -1 = context switch (include of other grammar).
-func evaluateRule(offset int, text string, start int, end int, top *StackItem, yield func(*Token), rule *matchRule) (*StackItem, int, error) {
+func evaluateRule(offset int, text string, top *StackItem, yield func(*Token), rule *matchRule) (*StackItem, int, error) {
 	if rule.includes != "" {
 		othergrammar := top.Grammar()
 		scopename, rulename, hasRule := strings.Cut(rule.includes, "#")
@@ -95,14 +95,14 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 				return nil, 0, fmt.Errorf("unable to include `%s`: unknown rule `%s`", rule.includes, rulename)
 			}
 		}
-		return evaluateRule(offset, text, start, end, top, yield, otherrule)
+		return evaluateRule(offset, text, top, yield, otherrule)
 	}
 
 	if rule.operation == opExpand {
 		var consumed int
 		var err error
 		for _, child := range rule.rules {
-			top, consumed, err = evaluateRule(offset, text, start, end, top, yield, child)
+			top, consumed, err = evaluateRule(offset, text, top, yield, child)
 			if err != nil || consumed != 0 {
 				return top, consumed, err
 			}
@@ -110,7 +110,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 		return top, 0, nil
 	}
 
-	groups, err := rule.pattern.Match(text, start, len(text), regexp.OptionNotBeginPosition)
+	groups, err := rule.pattern.Match(text, 0, len(text), regexp.OptionNotBeginPosition)
 	if err != nil || groups == nil {
 		return top, 0, err
 	}
@@ -140,7 +140,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 		if cap.name != "" {
 			yield(&Token{
 				Scope:  cap.name,
-				Start:  rng.Start + offset,
+				Start:  offset + rng.Start,
 				Length: rng.Len(),
 				Depth:  top.Depth(),
 			})
@@ -148,7 +148,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 
 		if cap.rules != nil {
 			var err error
-			_, err = TokenizeLine(offset, text, rng.Start, rng.End, &StackItem{rules: cap.rules, previous: top}, yield)
+			_, err = TokenizeSequence(offset+rng.Start, text[rng.Start:rng.End], &StackItem{rules: cap.rules, previous: top}, yield)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -158,7 +158,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 	switch rule.operation {
 	case opPush:
 		top = &StackItem{
-			offset:   start + offset,
+			offset:   offset,
 			rules:    rule.rules,
 			previous: top,
 		}
@@ -166,7 +166,7 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 		yield(&Token{
 			Scope:  rule.name,
 			Start:  top.offset,
-			Length: start + length + offset - top.offset,
+			Length: length + offset - top.offset,
 			Depth:  top.Depth(),
 		})
 		top = top.previous
@@ -175,19 +175,16 @@ func evaluateRule(offset int, text string, start int, end int, top *StackItem, y
 	return top, length, nil
 }
 
-// TokenizeLine tokenizes text[start:end] within the given stack context.
+// TokenizeSequence tokenizes text[start:end] within the given stack context.
 // Always guarantees progress: if nothing matches, emits a 1-byte filler token (Scope:"").
-func TokenizeLine(offset int, text string, start int, end int, top *StackItem, yield func(*Token)) (*StackItem, error) {
-	lineoffset := start
-	if end == 0 {
-		end = len(text)
-	}
-	for lineoffset < end {
+func TokenizeSequence(offset int, text string, top *StackItem, yield func(*Token)) (*StackItem, error) {
+	lineoffset := 0
+	for lineoffset < len(text) {
 		consumed := false
 		var err error
 		var adv int
 		for _, rule := range top.rules {
-			top, adv, err = evaluateRule(offset, text, lineoffset, end, top, yield, rule)
+			top, adv, err = evaluateRule(offset+lineoffset, text[lineoffset:], top, yield, rule)
 			if err != nil {
 				return nil, err
 			}
@@ -242,7 +239,7 @@ func (g *Grammar) TokenizeReader(reader io.Reader) ([]*Token, error) {
 	var err error
 	for scanner.Scan() {
 		text := scanner.Text()
-		top, err = TokenizeLine(offset, text, 0, len(text), top, func(t *Token) {
+		top, err = TokenizeSequence(offset, text, top, func(t *Token) {
 			tokens = append(tokens, t)
 		})
 		if err != nil {
