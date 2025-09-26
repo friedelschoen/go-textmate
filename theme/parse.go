@@ -1,3 +1,4 @@
+// Package theme lets you create a theme and apply it against a token-stream
 package theme
 
 import (
@@ -54,6 +55,7 @@ func setName(dest map[string]TokenColor, scope string, col TokenColor) {
 
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
+		//lint:ignore S1005 unnecessary assignment to `_` -- without the assignment a failed look-up results in a panic where I just want an empty color
 		c, _ := current[part]
 		if i == len(parts)-1 {
 			// final part, assign color

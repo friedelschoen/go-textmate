@@ -52,6 +52,7 @@ func NewLoader(paths iter.Seq[string]) (*Loader, bool) {
 		loader.scopes[grm.ScopeName] = grm
 		for _, ft := range grm.FileTypes {
 			ft = strings.TrimLeft(ft, ".")
+			//lint:ignore S1005 unnecessary assignment to `_` -- without the assignment a failed look-up results in a panic where I just want an empty array
 			fts, _ := loader.filetypes[ft]
 			loader.filetypes[ft] = append(fts, grm)
 		}

@@ -12,11 +12,6 @@ type ColorMapping struct {
 	Offset int
 }
 
-type TokenMapper struct {
-	theme   *Theme
-	mapping [][]*textmate.Token
-}
-
 func getSplitted(current map[string]TokenColor, name string) (TokenColor, bool) {
 	for name != "" {
 		s, ok := current[name]
