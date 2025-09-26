@@ -64,7 +64,7 @@ func main() {
 			fmt.Printf("- %s: %s\n", ft, strings.Join(names[ft], ", "))
 		}
 
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	// Defaults if not set
